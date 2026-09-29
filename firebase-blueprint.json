@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "ApiKey": {
+      "title": "API Key",
+      "description": "User's individual API key for connecting to Gemini.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "geminiApiKey": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "geminiApiKey"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Information about a product (KISS ME / PuraVida).",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "productName": { "type": "string" },
+        "features": { "type": "string" },
+        "brand": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["ownerId", "productName", "features"]
+    },
+    "TaProfile": {
+      "title": "Target Audience Profile",
+      "description": "TA description including age and pain points.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "ageGroup": { "type": "string" },
+        "description": { "type": "string" },
+        "painPoints": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["ownerId", "ageGroup", "description", "painPoints"]
+    },
+    "ProductDetail": {
+      "title": "Product Detail",
+      "description": "Additional details for a corresponding product.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "productId": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["ownerId", "productId", "details"]
+    },
+    "ImageStyle": {
+      "title": "Image Style",
+      "description": "Image styles for product image generation.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["ownerId", "name", "description"]
+    }
+  },
+  "firestore": {
+    "/apiKeys/{userId}": {
+      "schema": { "$ref": "#/entities/ApiKey" },
+      "description": "Private API keys for users."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Products configured by users."
+    },
+    "/taProfiles/{taProfileId}": {
+      "schema": { "$ref": "#/entities/TaProfile" },
+      "description": "TA profiles configured by users."
+    },
+    "/productDetails/{productDetailId}": {
+      "schema": { "$ref": "#/entities/ProductDetail" },
+      "description": "Product detailed configurations by users."
+    },
+    "/imageStyles/{imageStyleId}": {
+      "schema": { "$ref": "#/entities/ImageStyle" },
+      "description": "Image style configurations by users."
+    }
+  }
+}
