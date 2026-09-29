@@ -28,7 +28,14 @@ const BrandLogo = ({ className = "" }: { className?: string }) => (
 );
 
 export default function App() {
-  const { user, loading } = useAuth();
+  const { user: authUser, loading } = useAuth();
+
+  // 若未登入，直接給予公開免登入訪客身分
+  const user = authUser || {
+    uid: "guest-demo-user",
+    email: "demo@kissme-agent.com",
+    displayName: "訪客體驗者"
+  };
   
   // Utility to check if content is truly missing
   const isReallyMissing = (val: string) => {
@@ -757,41 +764,7 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (loading) return <div className="fixed inset-0 flex items-center justify-center bg-[#FDFCFB] text-slate-800 font-sans">載入中...</div>;
-
-  if (!user) {
-    return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-[#FDFCFB] font-sans text-slate-800 p-4">
-        <div className="bg-white p-8 rounded-3xl shadow-xl shadow-slate-200/50 max-w-md w-full text-center space-y-6 border border-slate-100">
-          <BrandLogo className="w-16 h-16 rounded-2xl mx-auto mb-4 object-cover shadow-md" />
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">KISS ME <span className="font-normal text-slate-500 block text-lg mt-1">Marketing AI Agent</span></h1>
-          <p className="text-slate-500 text-sm">歡迎使用奇士美與璞若美得的專屬 AI 行銷助理，請先登入以繼續。</p>
-          <button
-            onClick={handleLogin}
-            className="w-full py-3 px-4 bg-slate-900 rounded-xl font-medium text-white hover:bg-slate-800 flex items-center justify-center gap-3 transition-colors shadow-lg shadow-slate-200"
-          >
-            <img src="https://www.gstatic.com/images/branding/product/1x/gsa_512dp.png" alt="Google" className="w-5 h-5 bg-white rounded-full" />
-            使用 Google 帳號登入
-          </button>
-          
-          <div className="mt-6 text-left text-xs text-slate-500 bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <h3 className="font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
-              <span className="w-4 h-4 inline-flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[10px] font-bold">!</span>
-              遇到「403 disallowed_useragent」錯誤？
-            </h3>
-            <p className="mb-2">Google 基於安全考量，禁止在「App 內建的網頁瀏覽器 (WebView)」或 LINE 等通訊軟體內建瀏覽器登入。</p>
-            <p className="font-medium text-slate-700 mb-1">解決方案：</p>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>請點擊畫面右下角或右上角的「選單」圖示 (三個點或分享按鈕)。</li>
-              <li>選擇<strong className="text-slate-700">「在 Safari 中開啟」</strong>或<strong className="text-slate-700">「在預設瀏覽器中開啟」</strong> (如 Chrome)。</li>
-              <li>跳轉到真正的瀏覽器後，再點擊登入即可。</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // 直接進入主介面，不進行登入阻擋
   return (
     <div className="fixed inset-0 flex flex-col bg-[#FDFCFB] font-sans text-slate-800">
       {/* Top Navigation */}
@@ -1919,4 +1892,3 @@ export default function App() {
     </div>
   );
 }
-
