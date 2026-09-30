@@ -10,11 +10,48 @@ export const getGeminiClient = (apiKey: string) => {
 };
 
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const CANDIDATE_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.5-flash'];
 
 
+async function callGeminiWithFallback(
+  ai: GoogleGenAI,
+  params: {
+    contents: any;
+    config?: any;
+  }
+): Promise<any> {
+  let lastError: any = null;
+
+  for (const model of CANDIDATE_MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: params.contents,
+          config: params.config,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err?.message || JSON.stringify(err);
+        // 如果遇到 503 流量高峰，稍候 1 秒重試或切換下一個模型
+        if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
+          await new Promise((res) => setTimeout(res, 1200));
+          continue;
+        }
+        // 若非 503 錯誤則直接拋出
+        throw err;
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * 安全地從 AI 回應中提取純文字
+ */
 function safeExtractText(response: any): string {
-  const parts = response.candidates?.[0]?.content?.parts;
+  const parts = response?.candidates?.[0]?.content?.parts;
   if (parts && Array.isArray(parts)) {
     return parts
       .filter((p: any) => p.text)
@@ -22,7 +59,7 @@ function safeExtractText(response: any): string {
       .join('');
   }
   try {
-    return response.text || '';
+    return response?.text || '';
   } catch (e) {
     return '';
   }
@@ -84,7 +121,6 @@ export async function generateCopy(
   }
 ): Promise<any[]> {
   const ai = getGeminiClient(apiKey);
-  const modelToUse = DEFAULT_MODEL;
   
   if (onProgress) onProgress('AI 初步生成中...');
   
@@ -138,16 +174,14 @@ ${KISS_ME_EMOJIS}
 `;
   }
 
-  const primaryResponse = await ai.models.generateContent({
-    model: modelToUse,
+  const primaryResponse = await callGeminiWithFallback(ai, {
     contents: primaryPrompt,
   });
   const initialCopy = safeExtractText(primaryResponse);
 
   if (onProgress) onProgress('AI 審核建議中...');
   const criticPrompt = `作為品牌審查官，請針對以下初稿給予文字精進與吸睛度建議：\n${initialCopy}`;
-  const criticResponse = await ai.models.generateContent({
-    model: modelToUse,
+  const criticResponse = await callGeminiWithFallback(ai, {
     contents: criticPrompt,
   });
   const feedback = safeExtractText(criticResponse);
@@ -155,7 +189,7 @@ ${KISS_ME_EMOJIS}
   if (onProgress) onProgress('法規審查與格式化...');
   let legalPrompt = '';
   if (customSettings?.mode === 'custom' && customSettings.jsonFormat) {
-    legalPrompt = `你是化妝品行銷與法規專家。請參考審查建議，重寫文案，並嚴格遵循台灣《化妝品標示宣傳廣告涉及虛偽誇大或醫療效能認定基準》（嚴禁醫療效能、過度誇大詞彙）。
+    legalPrompt = `你是化妝品行銷與法規專家。請參考審查建議重寫文案，並嚴格遵循台灣《化妝品標示宣傳廣告涉及虛偽誇大或醫療效能認定基準》（嚴禁醫療效能、過度誇大詞彙）。
 審查建議：${feedback}
 
 【輸出規定】：
@@ -185,8 +219,7 @@ ${feedback}
 ]`;
   }
 
-  const finalResponse = await ai.models.generateContent({
-    model: modelToUse,
+  const finalResponse = await callGeminiWithFallback(ai, {
     contents: legalPrompt,
     config: {
       responseMimeType: 'application/json',
@@ -241,8 +274,7 @@ export async function generateImagePrompt(
   }
 ]`;
 
-  const response = await ai.models.generateContent({
-    model: DEFAULT_MODEL,
+  const response = await callGeminiWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json'
@@ -264,7 +296,7 @@ export async function generateImagePrompt(
 export async function generateImageUrlFromPrompt(
   apiKey: string, 
   promptText: string, 
-  modelId: string = DEFAULT_MODEL
+  modelId?: string
 ): Promise<string> {
   if (modelId === 'gpt-image-2') {
     const response = await fetch('https://api.openai.com/v1/images/generations', {
@@ -289,7 +321,6 @@ export async function generateImageUrlFromPrompt(
     return result.data[0].url;
   }
 
-  // 使用標準穩定生圖端點
   const ai = getGeminiClient(apiKey);
   const response = await ai.models.generateImages({
     model: 'imagen-3.0-generate-002',
@@ -347,8 +378,7 @@ ${copyContent}
 1. 這是 9:16 直式短影音腳本。
 2. 絕對不要使用或輸出數學箭頭符號（例如 ->、=> 等），請一律使用純文字描述動作或轉場。
 `;
-  const response = await ai.models.generateContent({
-    model: DEFAULT_MODEL,
+  const response = await callGeminiWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json'
@@ -389,8 +419,7 @@ async function ensureJsonFormat(
   else if (type === 'image') hint = '[{"title":"..."}]';
   else hint = '[{"voiceover":"..."}]';
   const prompt = `請將內容轉換為 JSON 格式 ${hint}：\n${content}`;
-  const response = await ai.models.generateContent({
-    model: DEFAULT_MODEL,
+  const response = await callGeminiWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json'
@@ -450,8 +479,7 @@ export async function analyzeCopyStyles(
 ): Promise<{ systemPrompt: string; jsonFormat: string }> {
   const ai = getGeminiClient(apiKey);
   const prompt = `分析文案風格，輸出 JSON: {"systemPrompt":"...","jsonFormat":"..."}\n範例：${copyList.join('\n')}`;
-  const response = await ai.models.generateContent({
-    model: DEFAULT_MODEL,
+  const response = await callGeminiWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json'
