@@ -1,24 +1,16 @@
 import { GoogleGenAI } from '@google/genai';
 import { KISS_ME_EMOJIS } from './emojis';
 
-// Initialize the API dynamically with the user's key
+
 export const getGeminiClient = (apiKey: string) => {
   if (!apiKey) {
     throw new Error('Gemini API key is required');
   }
-  return new GoogleGenAI({ 
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  });
+  return new GoogleGenAI({ apiKey });
 };
 
-/**
- * 安全地從 AI 回應中提取純文字
- */
+
+ 
 function safeExtractText(response: any): string {
   const parts = response.candidates?.[0]?.content?.parts;
   if (parts && Array.isArray(parts)) {
@@ -77,11 +69,12 @@ export async function generateCopy(
     mode: string;
     systemPrompt: string; 
     jsonFormat: string;
-    languageModel?: 'gemma-4-31b-it' | 'gemini-3.1-pro-preview';
+    languageModel?: string;
   }
 ): Promise<any[]> {
   const ai = getGeminiClient(apiKey);
-  const modelToUse = customSettings?.languageModel || 'gemma-4-31b-it';
+  // 統一採用官方標準穩定模型
+  const modelToUse = 'gemini-1.5-flash';
   
   if (onProgress) onProgress('AI 初步生成中...');
   
@@ -197,13 +190,13 @@ export async function generateImagePrompt(
   styleName: string,
   styleDesc: string,
   onProgress?: (stage: string) => void,
-  modelToUse: 'gemma-4-31b-it' | 'gemini-3.1-pro-preview' = 'gemma-4-31b-it'
+  modelToUse: string = 'gemini-1.5-flash'
 ): Promise<ImagePromptResult[]> {
   const ai = getGeminiClient(apiKey);
   if (onProgress) onProgress('圖像構圖發想中...');
   const prompt = `根據文案發想 3 個圖像設計。風格：${styleName} (${styleDesc})\n文案：${copyContent}\n輸出 JSON 陣列 [{"title":"...","overlayCopy":"...","designIdea":"...","prompt":"英文 AI 指令"}]`;
   const response = await ai.models.generateContent({
-    model: modelToUse,
+    model: 'gemini-1.5-flash',
     contents: prompt,
   });
   const res = extractJsonArray(safeExtractText(response));
@@ -213,7 +206,7 @@ export async function generateImagePrompt(
 export async function generateImageUrlFromPrompt(
   apiKey: string, 
   promptText: string, 
-  modelId: string = 'gemini-3.1-flash-image-preview'
+  modelId: string = 'gemini-1.5-flash'
 ): Promise<string> {
   if (modelId === 'gpt-image-2') {
     const response = await fetch('https://api.openai.com/v1/images/generations', {
@@ -238,17 +231,21 @@ export async function generateImageUrlFromPrompt(
     return result.data[0].url;
   }
 
+  // 避免 preview 權限問題，生圖直接呼叫 Imagen 3 穩定端點
   const ai = getGeminiClient(apiKey);
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.1-flash-image-preview',
-    contents: { parts: [{ text: promptText }] },
-    config: { imageConfig: { aspectRatio: '1:1', imageSize: '1K' } }
+  const response = await ai.models.generateImages({
+    model: 'imagen-3.0-generate-002',
+    prompt: promptText,
+    config: {
+      numberOfImages: 1,
+      aspectRatio: '1:1',
+      outputMimeType: 'image/jpeg'
+    }
   });
 
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData?.data) {
-      return `data:image/jpeg;base64,${part.inlineData.data}`;
-    }
+  const base64ImageBytes = response.generatedImages?.[0]?.image?.imageBytes;
+  if (base64ImageBytes) {
+    return `data:image/jpeg;base64,${base64ImageBytes}`;
   }
   throw new Error('No image generated');
 }
@@ -267,7 +264,7 @@ export async function generateVideoScript(
   apiKey: string, 
   copyContent: string,
   onProgress?: (stage: string) => void,
-  modelToUse: 'gemma-4-31b-it' | 'gemini-3.1-pro-preview' = 'gemma-4-31b-it'
+  modelToUse: string = 'gemini-1.5-flash'
 ): Promise<VideoScriptRow[]> {
   const ai = getGeminiClient(apiKey);
   if (onProgress) onProgress('影音腳本拆解中...');
@@ -293,13 +290,18 @@ ${copyContent}
 2. 絕對不要使用或輸出數學箭頭符號（例如 $\\rightarrow$、->、=> 等），請一律使用純文字描述動作或轉場。
 `;
   const response = await ai.models.generateContent({
-    model: modelToUse,
+    model: 'gemini-1.5-flash',
     contents: prompt,
   });
   return extractJsonArray(safeExtractText(response));
 }
 
-async function ensureJsonFormat(apiKey: string, type: 'copy' | 'image' | 'video', content: string, modelToUse: 'gemma-4-31b-it' | 'gemini-3.1-pro-preview' = 'gemma-4-31b-it'): Promise<string> {
+async function ensureJsonFormat(
+  apiKey: string, 
+  type: 'copy' | 'image' | 'video', 
+  content: string, 
+  modelToUse: string = 'gemini-1.5-flash'
+): Promise<string> {
   if (!content || content.trim() === '') return '[]';
   try {
     const parsed = JSON.parse(content);
@@ -312,7 +314,7 @@ async function ensureJsonFormat(apiKey: string, type: 'copy' | 'image' | 'video'
   else hint = '[{"voiceover":"..."}]';
   const prompt = `請將內容轉換為 JSON 格式 ${hint}：\n${content}`;
   const response = await ai.models.generateContent({
-    model: modelToUse,
+    model: 'gemini-1.5-flash',
     contents: prompt,
   });
   const res = extractJsonArray(safeExtractText(response));
@@ -332,7 +334,7 @@ export async function generateMarketingProposal(
   copyContent: string,
   imagePrompts: string,
   videoScript: string,
-  modelToUse: 'gemma-4-31b-it' | 'gemini-3.1-pro-preview' = 'gemma-4-31b-it'
+  modelToUse: string = 'gemini-1.5-flash'
 ): Promise<string> {
   const escapeHtml = (unsafe: string) => {
     return (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
@@ -370,7 +372,7 @@ export async function analyzeCopyStyles(
   const ai = getGeminiClient(apiKey);
   const prompt = `分析文案風格，輸出 JSON: {"systemPrompt":"...","jsonFormat":"..."}\n範例：${copyList.join('\n')}`;
   const response = await ai.models.generateContent({
-    model: 'gemma-4-31b-it',
+    model: 'gemini-1.5-flash',
     contents: prompt,
   });
   const text = safeExtractText(response);
