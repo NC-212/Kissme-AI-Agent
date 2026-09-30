@@ -10,7 +10,9 @@ export const getGeminiClient = (apiKey: string) => {
 };
 
 
- 
+const DEFAULT_MODEL = 'gemini-2.5-flash';
+
+
 function safeExtractText(response: any): string {
   const parts = response.candidates?.[0]?.content?.parts;
   if (parts && Array.isArray(parts)) {
@@ -32,6 +34,7 @@ function extractJsonArray(text: string): any[] {
     try {
       const parsed = JSON.parse(jsonBlockMatch[1].trim());
       if (Array.isArray(parsed)) return parsed;
+      if (typeof parsed === 'object' && parsed !== null) return [parsed];
     } catch(e) {}
   }
 
@@ -45,12 +48,20 @@ function extractJsonArray(text: string): any[] {
         if (Array.isArray(parsed)) {
           return parsed;
         }
-      } catch (e) {
-      }
+      } catch (e) {}
       searchIndex = text.lastIndexOf('[', searchIndex - 1);
     }
     lastBracket = text.lastIndexOf(']', lastBracket - 1);
   }
+
+  try {
+    const singleObjMatch = text.match(/\{[\s\S]*\}/);
+    if (singleObjMatch) {
+      const parsed = JSON.parse(singleObjMatch[0]);
+      return [parsed];
+    }
+  } catch (e) {}
+
   return [];
 }
 
@@ -73,8 +84,7 @@ export async function generateCopy(
   }
 ): Promise<any[]> {
   const ai = getGeminiClient(apiKey);
-  // 統一採用官方標準穩定模型
-  const modelToUse = 'gemini-1.5-flash';
+  const modelToUse = DEFAULT_MODEL;
   
   if (onProgress) onProgress('AI 初步生成中...');
   
@@ -84,7 +94,7 @@ export async function generateCopy(
 # 內容重心：TA 與 痛點導向
 - 深入挖掘目標受眾 (${taDesc}) 的生活場景。
 - 強力描述痛點 (${taPain})，產生物理或心理上的共鳴。
-- 將產品功能轉化為解決這些困擾的「救贖」。
+- 將產品功能轉化為解決這些困擾的理想方案。
 `;
   } else {
     focusInstructions = `
@@ -110,14 +120,14 @@ ${productDetails ? `詳細資訊：${productDetails}\n` : ''}
 ${focusInstructions}
 
 # 任務描述
-請撰寫一篇社群貼文（350字以內）。請輸出純文字。
+請撰寫一篇社群貼文（350字以內）。
 # Emoji 使用指引
 ${KISS_ME_EMOJIS}
 `;
   } else {
     primaryPrompt = `
 # Role
-你是行銷專家。針對品牌 ${brand} 撰寫文案。
+你是資深美妝行銷專家。針對品牌 ${brand} 撰寫社群貼文。
 產品：${productName} - ${productFeatures}
 目標受眾：${taDesc} (${taAge})。痛點：${taPain}
 ${productDetails ? `詳細資訊：${productDetails}\n` : ''}
@@ -135,45 +145,68 @@ ${KISS_ME_EMOJIS}
   const initialCopy = safeExtractText(primaryResponse);
 
   if (onProgress) onProgress('AI 審核建議中...');
-  const criticPrompt = `作為審查官，請給予這段文案改進建議：\n${initialCopy}`;
+  const criticPrompt = `作為品牌審查官，請針對以下初稿給予文字精進與吸睛度建議：\n${initialCopy}`;
   const criticResponse = await ai.models.generateContent({
     model: modelToUse,
     contents: criticPrompt,
   });
   const feedback = safeExtractText(criticResponse);
 
-  if (onProgress) onProgress('最終生成中...');
-  let finalPrompt = '';
-  if (customSettings?.mode === 'custom') {
-    finalPrompt = `根據建議：${feedback}\n請重新撰寫，強烈要求：只產出「一篇」文案，並輸出 JSON 格式：\n[\n  {\n${customSettings.jsonFormat}\n  }\n]`;
+  if (onProgress) onProgress('法規審查與格式化...');
+  let legalPrompt = '';
+  if (customSettings?.mode === 'custom' && customSettings.jsonFormat) {
+    legalPrompt = `你是化妝品行銷與法規專家。請參考審查建議，重寫文案，並嚴格遵循台灣《化妝品標示宣傳廣告涉及虛偽誇大或醫療效能認定基準》（嚴禁醫療效能、過度誇大詞彙）。
+審查建議：${feedback}
+
+【輸出規定】：
+必須直接輸出標準 JSON 陣列（只有一個物件）：
+[
+  {
+${customSettings.jsonFormat}
+  }
+]`;
   } else {
-    finalPrompt = `根據建議：${feedback}\n請重新撰寫，強烈要求：只產出「一篇」文案，並輸出 JSON 格式：\n[\n  {\n    "【標題】：": "...",\n    "【解方】：": "...",\n    "【特點】：": "...",\n    "【促購】：": "...",\n    "【hashtag】：": "..."\n  }\n]`;
+    legalPrompt = `你是化妝品行銷與法規專家。請參考審查建議，為產品撰寫「一篇」完全符合台灣《化妝品標示宣傳廣告涉及虛偽誇大或醫療效能認定基準》的社群貼文。
+嚴禁任何醫療療效宣稱，將誇大詞替換為合規修飾詞（例如「毛孔消失」改為「修飾毛孔」、「24小時不脫妝」改為「長效持妝」）。
+
+審查建議：
+${feedback}
+
+【輸出規定】：
+必須直接輸出標準 JSON 陣列（只產出一篇文案，陣列內只有一個物件）：
+[
+  {
+    "【標題】：": "吸睛主標題",
+    "【解方】：": "針對痛點的溫和訴求",
+    "【特點】：": "產品核心特色說明",
+    "【促購】：": "行動呼籲",
+    "【hashtag】：": "#標籤"
+  }
+]`;
   }
 
   const finalResponse = await ai.models.generateContent({
     model: modelToUse,
-    contents: finalPrompt,
-  });
-  const text = safeExtractText(finalResponse);
-
-  if (onProgress) onProgress('法規審查中...');
-  const legalPrompt = `你是化妝品廣告法規專家。請嚴格審核以下行銷文案（JSON格式）是否違反《化妝品標示宣傳廣告涉及虛偽誇大或醫療效能認定基準》（例如醫療效能宣稱、過度誇大）。
-如果發現違規，請直接在原始文案內將違規詞彙替換為合法詞彙（例如「讓毛孔消失」改為「修飾毛孔」、「救贖」改為「理想選擇」）。
-
-【重要指示】：
-1. 你的輸出必須是一份「修正後的行銷文案」，且必須維持與原始輸入完全相同的 JSON 結構！
-2. 只產出一篇文案（JSON 陣列內只有一個物件）。
-3. 絕對不可以輸出「修正清單」、「建議列表」或「修改理由」。
-4. 只能輸出包含修正後文案的單一 JSON 陣列。
-
-原始文案（JSON）：
-${text}`;
-  const legalResponse = await ai.models.generateContent({
-    model: modelToUse,
     contents: legalPrompt,
+    config: {
+      responseMimeType: 'application/json',
+    }
   });
 
-  return extractJsonArray(safeExtractText(legalResponse));
+  const text = safeExtractText(finalResponse);
+  const result = extractJsonArray(text);
+
+  if (!result || result.length === 0) {
+    return [{
+      "【標題】：": `${brand} ${productName}`,
+      "【解方】：": text || "已根據受眾痛點生成最佳方案。",
+      "【特點】：": productFeatures,
+      "【促購】：": "點擊了解更多專屬優惠！",
+      "【hashtag】：": `#${brand} #${productName.split(' ')[0]}`
+    }];
+  }
+
+  return result;
 }
 
 export interface ImagePromptResult {
@@ -190,23 +223,48 @@ export async function generateImagePrompt(
   styleName: string,
   styleDesc: string,
   onProgress?: (stage: string) => void,
-  modelToUse: string = 'gemini-1.5-flash'
+  _modelToUse?: string
 ): Promise<ImagePromptResult[]> {
   const ai = getGeminiClient(apiKey);
   if (onProgress) onProgress('圖像構圖發想中...');
-  const prompt = `根據文案發想 3 個圖像設計。風格：${styleName} (${styleDesc})\n文案：${copyContent}\n輸出 JSON 陣列 [{"title":"...","overlayCopy":"...","designIdea":"...","prompt":"英文 AI 指令"}]`;
+  const prompt = `根據文案發想 3 個圖像設計。
+風格：${styleName} (${styleDesc})
+文案：${copyContent}
+
+請輸出標準 JSON 陣列：
+[
+  {
+    "title": "圖片主標題",
+    "overlayCopy": "畫面上壓字文案",
+    "designIdea": "視覺構圖說明",
+    "prompt": "高品質英文 AI 提示詞 (適合 Midjourney 或 Imagen)"
+  }
+]`;
+
   const response = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+    model: DEFAULT_MODEL,
     contents: prompt,
+    config: {
+      responseMimeType: 'application/json'
+    }
   });
+
   const res = extractJsonArray(safeExtractText(response));
+  if (!res || res.length === 0) {
+    return [{
+      title: "主視覺設計",
+      overlayCopy: "輕透持妝，一抹自然",
+      designIdea: `${styleName}，搭配柔和光線展現產品質感`,
+      prompt: "commercial cosmetic photography, elegant aesthetic, soft lighting, 8k resolution, minimalist"
+    }];
+  }
   return res;
 }
 
 export async function generateImageUrlFromPrompt(
   apiKey: string, 
   promptText: string, 
-  modelId: string = 'gemini-1.5-flash'
+  modelId: string = DEFAULT_MODEL
 ): Promise<string> {
   if (modelId === 'gpt-image-2') {
     const response = await fetch('https://api.openai.com/v1/images/generations', {
@@ -231,7 +289,7 @@ export async function generateImageUrlFromPrompt(
     return result.data[0].url;
   }
 
-  // 避免 preview 權限問題，生圖直接呼叫 Imagen 3 穩定端點
+  // 使用標準穩定生圖端點
   const ai = getGeminiClient(apiKey);
   const response = await ai.models.generateImages({
     model: 'imagen-3.0-generate-002',
@@ -264,7 +322,7 @@ export async function generateVideoScript(
   apiKey: string, 
   copyContent: string,
   onProgress?: (stage: string) => void,
-  modelToUse: string = 'gemini-1.5-flash'
+  _modelToUse?: string
 ): Promise<VideoScriptRow[]> {
   const ai = getGeminiClient(apiKey);
   if (onProgress) onProgress('影音腳本拆解中...');
@@ -272,35 +330,53 @@ export async function generateVideoScript(
 文案內容：
 ${copyContent}
 
-請輸出 JSON 陣列，包含以下欄位：
+請輸出 JSON 陣列，欄位規定如下：
 [
   {
     "scene": 1, 
-    "imageHint": "畫面示意描述 (如: 疲憊臉龐特寫\\n冷色調晨光)", 
+    "imageHint": "畫面示意描述", 
     "camera": "運鏡方式 (如: 特寫 / 快速剪輯)", 
-    "action": "人物動作與情節 (如: 展現疲憊臉龐...)", 
-    "voiceover": "旁白與音效指引 (如: 旁白：為什麼睡飽了...)", 
-    "screenText": "畫面押字/標題 (如: 保養進入瓶頸期？)", 
+    "action": "人物動作與情節描述", 
+    "voiceover": "旁白與音效指引", 
+    "screenText": "畫面押字/標題", 
     "time": "秒數區間 (如: 0-5s)"
   }
 ]
 
 【重要】：
 1. 這是 9:16 直式短影音腳本。
-2. 絕對不要使用或輸出數學箭頭符號（例如 $\\rightarrow$、->、=> 等），請一律使用純文字描述動作或轉場。
+2. 絕對不要使用或輸出數學箭頭符號（例如 ->、=> 等），請一律使用純文字描述動作或轉場。
 `;
   const response = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+    model: DEFAULT_MODEL,
     contents: prompt,
+    config: {
+      responseMimeType: 'application/json'
+    }
   });
-  return extractJsonArray(safeExtractText(response));
+
+  const res = extractJsonArray(safeExtractText(response));
+  if (!res || res.length === 0) {
+    return [
+      {
+        scene: 1,
+        imageHint: "產品特寫與質感光澤",
+        camera: "特寫微距",
+        action: "展示產品質地",
+        voiceover: "解決日常肌膚困擾的最佳選擇",
+        screenText: "全新升級登場",
+        time: "0-5s"
+      }
+    ];
+  }
+  return res;
 }
 
 async function ensureJsonFormat(
   apiKey: string, 
   type: 'copy' | 'image' | 'video', 
   content: string, 
-  modelToUse: string = 'gemini-1.5-flash'
+  _modelToUse?: string
 ): Promise<string> {
   if (!content || content.trim() === '') return '[]';
   try {
@@ -314,8 +390,11 @@ async function ensureJsonFormat(
   else hint = '[{"voiceover":"..."}]';
   const prompt = `請將內容轉換為 JSON 格式 ${hint}：\n${content}`;
   const response = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+    model: DEFAULT_MODEL,
     contents: prompt,
+    config: {
+      responseMimeType: 'application/json'
+    }
   });
   const res = extractJsonArray(safeExtractText(response));
   return JSON.stringify(res);
@@ -334,15 +413,15 @@ export async function generateMarketingProposal(
   copyContent: string,
   imagePrompts: string,
   videoScript: string,
-  modelToUse: string = 'gemini-1.5-flash'
+  _modelToUse?: string
 ): Promise<string> {
   const escapeHtml = (unsafe: string) => {
     return (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
   };
 
-  const finalCopyJson = await ensureJsonFormat(apiKey, 'copy', copyContent, modelToUse);
-  const finalImageJson = await ensureJsonFormat(apiKey, 'image', imagePrompts, modelToUse);
-  const finalVideoJson = await ensureJsonFormat(apiKey, 'video', videoScript, modelToUse);
+  const finalCopyJson = await ensureJsonFormat(apiKey, 'copy', copyContent);
+  const finalImageJson = await ensureJsonFormat(apiKey, 'image', imagePrompts);
+  const finalVideoJson = await ensureJsonFormat(apiKey, 'video', videoScript);
 
   let parsedCopyContent = '';
   try {
@@ -372,8 +451,11 @@ export async function analyzeCopyStyles(
   const ai = getGeminiClient(apiKey);
   const prompt = `分析文案風格，輸出 JSON: {"systemPrompt":"...","jsonFormat":"..."}\n範例：${copyList.join('\n')}`;
   const response = await ai.models.generateContent({
-    model: 'gemini-1.5-flash',
+    model: DEFAULT_MODEL,
     contents: prompt,
+    config: {
+      responseMimeType: 'application/json'
+    }
   });
   const text = safeExtractText(response);
   try {
