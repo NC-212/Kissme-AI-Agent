@@ -118,12 +118,8 @@ export function useAuth() {
 
 export function useApiKey(userId: string | undefined) {
   const [apiKey, setApiKey] = useState<string>(() => {
-    return (
-      getLocalData<string>('gemini_api_key', '') ||
-      (import.meta as any).env?.VITE_GEMINI_API_KEY ||
-      (import.meta as any).env?.GEMINI_API_KEY ||
-      ''
-    );
+    const saved = getLocalData<string>('gemini_api_key', '');
+    return saved || '你的Gemini_API_Key';
   });
   const [chatGptApiKey, setChatGptApiKey] = useState<string>(() => {
     return getLocalData<string>('chatgpt_api_key', '');
