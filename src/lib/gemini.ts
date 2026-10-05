@@ -10,7 +10,7 @@ export const getGeminiClient = (apiKey: string) => {
 };
 
 
-const CANDIDATE_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.5-flash'];
+const CANDIDATE_MODELS = ['gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash'];
 
 
 async function callGeminiWithFallback(
